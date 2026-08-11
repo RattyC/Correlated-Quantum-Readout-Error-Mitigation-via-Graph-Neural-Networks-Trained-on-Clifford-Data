@@ -1,11 +1,15 @@
 # train_gnn.py
+import argparse
+import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GATConv
-import random
+
 from prepare_gnn_dataset import load_and_convert_dataset
+
 
 class QuantumReadoutMitigationGAT(nn.Module):
     def __init__(self, in_channels):
@@ -15,17 +19,11 @@ class QuantumReadoutMitigationGAT(nn.Module):
         # ไม่ผูกกับจำนวนคิวบิตจริง — นี่คือจุดที่ทำให้ zero-shot ข้าม qubit count ทำได้)
         # in_channels ถูกกำหนดจาก data โดยตรง ไม่ hardcode ในนี้
 
-        # เลเยอร์ 1: กวาดข้อมูลจากทุกคิวบิต (เพราะตอนนี้กราฟเชื่อมถึงกันหมดแล้ว)
         self.gat1 = GATConv(in_channels, 16, heads=4, concat=True)
-
-        # เลเยอร์ 2: รวบรวมข้อมูลจาก 4 heads และสกัดเป็นฟีเจอร์ก่อนส่งออก
         self.gat2 = GATConv(64, 16, heads=1, concat=False)
-
-        # เลเยอร์สุดท้าย: แปลงกลับเป็นตัวเลขมิติเดียว
         self.fc = nn.Linear(16, 1)
 
     def forward(self, x, edge_index):
-        # แยกเฉพาะค่า Noisy Z ดั้งเดิม
         raw_z = x[:, 0].view(-1, 1)
 
         out = self.gat1(x, edge_index)
@@ -36,7 +34,6 @@ class QuantumReadoutMitigationGAT(nn.Module):
 
         out = self.fc(out)
 
-        # Residual Connection: เอา Noisy ดั้งเดิม บวกกับ ค่าชดเชย (Delta) ที่ GNN คิดได้
         mitigated_x = raw_z + out
 
         # clamp ตัดขอบที่ -1.0 และ 1.0 เพื่อให้ตรงกับสเกลฟิสิกส์ของ <Z>
@@ -56,12 +53,25 @@ def _evaluate(model, loader, criterion, num_samples):
     return total_loss / num_samples
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train the QuantumReadoutMitigationGAT model.")
+    parser.add_argument(
+        "--input",
+        type=str,
+        default="output_data/quantum_large_dataset.json",
+        help="Path to the raw dataset JSON produced by main.py.",
+    )
+    parser.add_argument("--epochs", type=int, default=40, help="Number of training epochs.")
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     torch.manual_seed(42)
     random.seed(42)
 
-    json_path = "output_data/quantum_large_dataset.json"
-    full_dataset = load_and_convert_dataset(json_path)
+    full_dataset = load_and_convert_dataset(args.input)
     random.shuffle(full_dataset)
 
     train_size = int(0.8 * len(full_dataset))
@@ -82,8 +92,7 @@ def main():
     print(model)
     print("\n Residual GAT Training Loop on Pauli-Z Domain ")
 
-    EPOCHS = 40
-    for epoch in range(1, EPOCHS + 1):
+    for epoch in range(1, args.epochs + 1):
         model.train()
         total_train_loss = 0
         for batch in train_loader:
@@ -97,10 +106,9 @@ def main():
 
         average_test_loss = _evaluate(model, test_loader, criterion, len(test_dataset))
 
-        if epoch == 1 or epoch % 5 == 0 or epoch == EPOCHS:
-            print(f"Epoch {epoch:02d}/{EPOCHS} | Train MSE: {average_train_loss:.6f} | Test MSE: {average_test_loss:.6f}")
+        if epoch == 1 or epoch % 5 == 0 or epoch == args.epochs:
+            print(f"Epoch {epoch:02d}/{args.epochs} | Train MSE: {average_train_loss:.6f} | Test MSE: {average_test_loss:.6f}")
 
-    # Qualitative sample check after training completes
     model.eval()
     with torch.no_grad():
         sample = test_dataset[0]
@@ -114,6 +122,7 @@ def main():
         print(f"\n--- Sample Prediction Contrast <Z> (Qubit 0 to {num_q - 1}) ---")
         for i in range(num_q):
             print(f"Qubit {i:02d} -> Noisy Input: {noisy_input[i]:+.4f} | Mitigated: {prediction[i]:+.4f} | Ideal Target: {ideal_target[i]:+.4f}")
+
 
 if __name__ == "__main__":
     main()
