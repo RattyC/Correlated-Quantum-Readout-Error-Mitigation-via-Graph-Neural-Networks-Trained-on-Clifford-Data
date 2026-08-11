@@ -518,3 +518,54 @@ architecture/target changed — they systematically ruled out 6 alternative expl
 dead zone, data scale, label shot noise, learning rate, model capacity, GATConv-vs-partner-
 feature-access) before landing on the real explanation (wrong problem level). This ablation
 sequence is itself worth keeping in the paper's methodology/negative-results section.
+
+---
+
+## V2 Phase A + B1 + B2 results — first genuine win
+
+### Phase A: `prepare_joint_dataset.py`
+- Unit test (hand-verified, 3-qubit/1-pair known-counts example) PASSED before touching real
+  data, per V2_PLAN.md gate.
+- Extracted 30,000 (circuit, pair) joint-distribution examples from the 10,000-circuit
+  `quantum_dataset_q7_correlated_v2.json` (3 pairs x 10,000 circuits).
+
+### Phase B2: analytical inversion ceiling (`calibrate_pair_matrix.py` + `eval_analytical_baseline.py`)
+- Calibrated 4x4 assignment matrices for all 3 correlated pairs via dedicated |00>/|01>/|10>/|11>
+  preparation circuits (50,000 shots each), inverted via `np.linalg.pinv`.
+- Evaluated on all 30,000 (circuit, pair) examples:
+  - Mean KL divergence (ideal ‖ corrected): **0.003689**
+  - Mean total variation distance: **0.009546**
+  - **Fraction of examples with negative raw probability entries before clipping: 65.53%**
+- This empirically confirms, for the first time in this project (not just by literature
+  citation), the exact weakness the thesis motivation describes for naive matrix inversion
+  (Nation et al. 2021 / M3 motivation): negative entries are common, not an edge case.
+
+### Phase B1: `train_joint_mlp.py` (v2 baseline — KL-loss, softmax output, residual-in-logit-space)
+- 420 params, 40 epochs, lr=1e-3.
+- Test KL divergence: **0.001983** — **beats the analytical inversion ceiling by ~1.86x** on the
+  primary metric specified in V2_PLAN.md. Phase B gate ("MLP beats or approaches ceiling") is
+  met, ahead of schedule.
+- Test TV distance: **0.016794** — worse than analytical's 0.009546 (~1.76x). Softmax output
+  guarantees zero negative-entry failures by construction (0% vs analytical's 65.53%).
+- Interpretation: KL and TV disagree here. The MLP, trained directly on KL loss, avoids
+  catastrophic log-ratio penalties (assigning near-zero probability to an outcome with real
+  mass) — exactly the failure mode negative/clipped entries cause for the analytical baseline.
+  But when analytical inversion doesn't hit a negative entry (~34.5% of cases), its linear
+  correction is sharper/less smoothed than the small MLP, giving it better TV on average. Report
+  both metrics honestly in the thesis — this is a real trade-off, not a metric-shopping result.
+
+## Open items (priority order) — updated
+
+1. **Report both KL and TV findings honestly; consider whether a combined KL+TV loss narrows
+   the TV gap** without sacrificing the KL win — quick experiment, try before moving on.
+2. **Phase C: M3 baseline (`mthree` package)** — now the natural next step per V2_PLAN.md, and
+   more important than ever as an independent, established reference point given how nuanced the
+   analytical-vs-MLP KL/TV trade-off already is.
+3. GNN with inter-pair edges — per V2_PLAN.md section 2, only pursue if k>2 leakage is
+   demonstrated in residuals. Not yet tested; current per-pair-independent MLP is doing well
+   enough that this may not be needed at all for the 7-qubit case.
+4. Scaling study (4/6/8/10 qubits) — unchanged, still open; now unblocked in principle since
+   Phase B gate passed, but should wait for Phase C (M3) first per plan.
+5. README + thesis writeup — still deferred, but the V2 story now has a genuine positive result
+   (MLP beats analytical inversion on KL) to anchor around, alongside the honest KL/TV trade-off
+   and the Run 1-12 negative-result narrative from v1.
