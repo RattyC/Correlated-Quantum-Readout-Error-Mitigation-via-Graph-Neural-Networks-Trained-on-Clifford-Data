@@ -167,3 +167,92 @@ hidden_dim (16 -> 64) with lr/epochs held at original baseline, same 7-qubit dat
 3. M3 baseline — unchanged, still open.
 4. Scaling study proper — unchanged, still open.
 5. README + thesis writeup — deliberately deferred until items 2-3 above are done.
+
+### Run 6 — Model-capacity sweep (7-qubit baseline dataset, clamp, lr=1e-3, controls held fixed)
+- Command: `python train_gnn.py --input output_data/quantum_large_dataset.json --hidden-dim 64 --epochs 40`
+- Result: 19,713 params (8.7x baseline's 2,267). Test MSE converges to 0.001508-0.001513 by
+  epoch 5, with minor noise mid-training (spike to 0.001577 at epoch 20) that settles back to the
+  same floor by epoch 40. No meaningful improvement over the 16-dim baseline.
+- Conclusion: model-capacity-ceiling hypothesis is **falsified**. 8.7x more parameters lands at
+  the identical floor.
+
+### Ruled out so far — updated
+1. ~~Clamp gradient dead zone~~ — falsified by Run 3.
+2. ~~Data scale (qubit count)~~ — falsified by Run 2.
+3. ~~Label shot noise~~ — mostly falsified by Run 4.
+4. ~~Learning rate too high~~ — falsified by Run 5.
+5. ~~Model capacity~~ — falsified by Run 6.
+
+Five independent variables changed, all landing on the same ~0.0015 floor. Working theory now:
+the floor is not a training/architecture defect at all — it may simply equal what a **trivial
+per-qubit-only regressor** (no graph, no cross-qubit information) could achieve, because the
+current noise model (`src/simulator.py`) is per-qubit uncorrelated. If there is no cross-qubit
+correlation signal in the data, the GAT's attention mechanism has nothing extra to exploit versus
+a plain per-node function of its own noisy ⟨Z⟩ — the architecture's core premise would simply be
+untested by this dataset, not disproven by it.
+
+## Open items (priority order) — updated
+
+1. **Trivial baseline test** (next) — add `train_baseline_mlp.py`: a plain per-qubit MLP with no
+   `edge_index` input (ignores all other qubits), same node features (noisy Z + PE), same
+   residual+clamp output head, same training config. Train on the same 7-qubit dataset. If its
+   floor MSE lands at ~0.0015 (same as the GAT), it proves the GAT is gaining nothing from the
+   graph/attention on this data — conclusively pointing at the uncorrelated noise model as the
+   real blocker, not model design. If the baseline is meaningfully worse, the GAT is extracting
+   some signal and the floor has a different explanation.
+2. **Correlated noise model** — likely to be promoted to priority #1 depending on the baseline
+   result above. `_build_readout_noise_model()` needs a joint/correlated `ReadoutError` across
+   qubit pairs before any claim tied to the project's "correlated readout error" framing is valid.
+3. M3 baseline — unchanged, still open.
+4. Scaling study proper — unchanged, still open.
+5. README + thesis writeup — deliberately deferred until items 2-3 above are done.
+
+### Run 7 — Trivial baseline: per-qubit MLP, no graph (7-qubit baseline dataset, clamp, controls held fixed)
+- Command: `python train_baseline_mlp.py --input output_data/quantum_large_dataset.json --epochs 40`
+- Model: `PerQubitMLPBaseline` — 449 params, same 2-hidden-layer depth as the GAT, `edge_index`
+  never touched, each qubit sees only its own `[noisy Z, positional encoding]` features.
+- Result: Test MSE 0.000199-0.000200 (epoch 40) vs. GAT baseline's 0.001509-0.001513 — the
+  no-graph baseline is **~7.5x better**, not merely equal as hypothesized.
+- Sample predictions: baseline hits saturated qubits essentially exactly (noisy -0.9321 ->
+  mitigated -1.0000, ideal -1.0000; noisy +0.9624 -> mitigated +1.0000, ideal +1.0000) — GAT on
+  the same sample only reaches -0.9573/+0.9373.
+
+- **Conclusion — revised, stronger than the pre-registered hypothesis.** The original theory was
+  "no correlation signal exists in this uncorrelated-noise dataset, so the GAT and a trivial
+  baseline should land at the same floor." The actual result is that the GAT performs *worse*
+  than the trivial baseline, not merely equal to it. This points at the all-to-all graph +
+  2-layer attention actively degrading each qubit's own (already informative) signal via
+  over-smoothing — exactly the risk the README's own design-choices table flagged
+  ("all-to-all edges... accelerates over-smoothing") but had not empirically confirmed until now.
+- Practical implication: none of Runs 2-6 (data scale, activation, shots, LR, capacity) could
+  have found this, because they all kept the complete-graph GAT architecture fixed and varied
+  everything else. The bottleneck was the architecture's interaction with this dataset the whole
+  time.
+
+### Ruled out so far — final for this diagnostic phase
+1. ~~Clamp gradient dead zone~~ — falsified by Run 3.
+2. ~~Data scale (qubit count)~~ — falsified by Run 2.
+3. ~~Label shot noise~~ — mostly falsified by Run 4.
+4. ~~Learning rate too high~~ — falsified by Run 5.
+5. ~~Model capacity~~ — falsified by Run 6.
+6. **Confirmed (not falsified): GAT/complete-graph architecture underperforms a trivial per-qubit
+   baseline on the current (uncorrelated-noise) dataset — Run 7.**
+
+## Open items (priority order) — updated
+
+1. **Correlated noise model** — now the clear top priority, for two combined reasons: (a) required
+   for the project's "correlated readout error" framing to be valid at all, and (b) it is the only
+   way to test whether the GAT's attention mechanism has *any* real signal to exploit — Run 7
+   shows it currently has none, and the complete graph is actively harmful in that regime.
+2. **Re-run GAT vs. MLP-baseline comparison once correlated noise exists.** If GAT still loses to
+   the trivial baseline even with real cross-qubit correlation in the data, the architecture
+   itself (all-to-all edges, 2-layer depth) needs revisiting — e.g. sparser/learned edge topology,
+   gating to let the model ignore irrelevant neighbors, or fewer effective hops.
+3. M3 baseline — unchanged, still open; the per-qubit MLP result above is a useful interim
+   sanity-check baseline but is not a substitute for M3.
+4. Scaling study proper — unchanged, still open; should not be run until item 1-2 are resolved,
+   since scaling a broken architecture just reproduces the same failure at more qubit counts.
+5. README + thesis writeup — deliberately deferred until items 1-2 above are done. This finding
+   (GAT underperforming a trivial baseline under uncorrelated noise) is itself a legitimate,
+   citable result for the eventual paper's ablation section — do not discard it once the
+   correlated-noise experiments are run; keep both results for contrast.
