@@ -35,6 +35,19 @@ def build_fully_connected_edge_index(num_qubits):
     return torch.stack([sources.reshape(-1), targets.reshape(-1)], dim=0).long()
 
 
+def build_sparse_edge_index(correlated_pairs, num_qubits):
+    """Edge index built ONLY from the ground-truth correlated qubit pairs, plus self-loops
+    (each qubit always attends to itself so it keeps its own signal). Everything else is
+    disconnected — the opposite extreme from all-to-all, used to isolate whether the
+    complete-graph topology itself was the bottleneck (see EXPERIMENT_LOG.md Run 9-10)."""
+    sources = list(range(num_qubits))  # self-loops
+    targets = list(range(num_qubits))
+    for a, b in correlated_pairs:
+        sources += [a, b]
+        targets += [b, a]  # undirected: both directions for message passing
+    return torch.tensor([sources, targets], dtype=torch.long)
+
+
 def sinusoidal_positional_encoding(num_qubits, d_model=D_MODEL):
     """Fixed-dimension positional encoding แทน one-hot qubit ID."""
     position = torch.arange(num_qubits).unsqueeze(1).float()
@@ -45,8 +58,11 @@ def sinusoidal_positional_encoding(num_qubits, d_model=D_MODEL):
     return pe
 
 
-def load_and_convert_dataset(json_path):
-    print(f"Loading dataset from {json_path}...")
+def load_and_convert_dataset(json_path, edge_mode: str = "full"):
+    if edge_mode not in ("full", "sparse"):
+        raise ValueError(f"Unknown edge_mode: {edge_mode!r}")
+
+    print(f"Loading dataset from {json_path}... (edge_mode={edge_mode})")
     with open(json_path, 'r') as f:
         raw_data = json.load(f)
 
@@ -55,7 +71,16 @@ def load_and_convert_dataset(json_path):
     for item in raw_data:
         num_qubits = item["num_qubits"]
 
-        edge_index = build_fully_connected_edge_index(num_qubits).clone()
+        if edge_mode == "full":
+            edge_index = build_fully_connected_edge_index(num_qubits).clone()
+        else:
+            correlated_pairs = item.get("correlated_pairs", [])
+            if not correlated_pairs:
+                raise ValueError(
+                    "edge_mode='sparse' requires 'correlated_pairs' in the dataset JSON — "
+                    "this dataset was likely generated before the correlated noise model was added."
+                )
+            edge_index = build_sparse_edge_index(correlated_pairs, num_qubits)
 
         noisy_z = bitstrings_to_pauli_z(item["noisy_outputs"], num_qubits)
         noisy_z_view = noisy_z.view(num_qubits, 1)
@@ -76,20 +101,20 @@ def load_and_convert_dataset(json_path):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert raw Clifford dataset JSON into PyG Data objects.")
+    parser.add_argument("--input", type=str, default="output_data/quantum_large_dataset.json")
     parser.add_argument(
-        "--input",
-        type=str,
-        default="output_data/quantum_large_dataset.json",
-        help="Path to the raw dataset JSON produced by main.py.",
+        "--edge-mode", type=str, choices=["full", "sparse"], default="full",
+        help="'full' = all-to-all edges (original). 'sparse' = only ground-truth correlated pairs + self-loops.",
     )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    dataset = load_and_convert_dataset(args.input)
+    dataset = load_and_convert_dataset(args.input, edge_mode=args.edge_mode)
 
     sample = dataset[0]
     print("\n--- Example of Pauli-Z PyG Graph Data Object ---")
     print(f"Noisy Pauli-Z (Input X):\n{sample.x.numpy().flatten()}")
     print(f"Ideal Pauli-Z (Target Y):\n{sample.y.numpy().flatten()}")
+    print(f"Edge index shape: {sample.edge_index.shape}, edges:\n{sample.edge_index}")
