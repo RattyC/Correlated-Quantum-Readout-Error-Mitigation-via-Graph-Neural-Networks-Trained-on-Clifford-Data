@@ -256,3 +256,68 @@ untested by this dataset, not disproven by it.
    (GAT underperforming a trivial baseline under uncorrelated noise) is itself a legitimate,
    citable result for the eventual paper's ablation section — do not discard it once the
    correlated-noise experiments are run; keep both results for contrast.
+
+---
+
+## Correlated noise model (design + first results)
+
+### Design
+- **Added:** `src/simulator.py` rewritten to build a correlated-pair readout noise model
+  instead of independent per-qubit noise. Mechanism: a fraction of qubits
+  (`CORRELATED_PAIR_FRACTION=0.5`) are randomly paired (NOT tied to coupling map, per
+  Maciejewski et al. 2021 finding that real hardware correlations don't follow physical
+  layout). Each pair shares a single "crosstalk event" (`SHARED_FLIP_PROB=0.05`) that flips
+  both qubits together — genuinely correlated, not decomposable into independent per-qubit
+  noise. Mixed with the old independent model at weight `CORRELATION_RHO=0.5`. Unpaired
+  qubits keep the original independent single-qubit error. Pair topology is cached/seeded
+  per qubit count (`NOISE_MODEL_SEED`) so it's fixed across all circuits in one dataset run,
+  like a real device's (unknown) fixed correlation structure.
+- **Added:** `get_correlated_pairs(num_qubits)` — ground-truth metadata, now saved into every
+  record via `main.py` (`correlated_pairs` field) for later analysis of whether GAT attention
+  actually learns the true correlation structure.
+- Smoke-tested at 4 qubits / 200 circuits first (no errors, `[[2, 1]]` pair as expected) before
+  the full run.
+
+### Run 8 — GAT vs. MLP baseline on correlated-noise dataset (7 qubits, 10,000 circuits)
+- Ground truth: `correlated_pairs = [[1, 6], [5, 3]]` (4 of 7 qubits actually correlated; 0, 2, 4
+  unpaired/independent).
+- Command:
+  ```
+  python main.py --num-qubits 7 --num-circuits 10000 --depth 30 --shots 4096 --output quantum_dataset_q7_correlated.json
+  python prepare_gnn_dataset.py --input output_data/quantum_dataset_q7_correlated.json
+  python train_gnn.py --input output_data/quantum_dataset_q7_correlated.json --epochs 40 --activation clamp
+  python train_baseline_mlp.py --input output_data/quantum_dataset_q7_correlated.json --epochs 40
+  ```
+- Result:
+
+  | | uncorrelated (Run 1 / Run 7) | correlated (Run 8) |
+  |---|---|---|
+  | GAT Test MSE | 0.001509-0.001513 | 0.000784 |
+  | MLP baseline Test MSE | 0.000199-0.000200 | 0.000199 |
+  | GAT vs baseline gap | GAT 7.5x worse | GAT 3.9x worse |
+
+- Conclusion: **GAT improved ~48% once real cross-qubit correlation exists in the data, while
+  the MLP baseline stayed essentially flat** (as expected — its marginal per-qubit error
+  statistics didn't change, only the joint pattern did, which it cannot see). This is the first
+  positive evidence that the GAT's attention mechanism is extracting real correlation signal,
+  not just noise. However, GAT still underperforms the trivial baseline by ~3.9x. Working
+  explanation: only 2 of the 21 possible qubit pairs in the 7-qubit complete graph carry real
+  signal (4 of 7 qubits are in a correlated pair at all); the other ~19 edges still force
+  attention to mix in uninformative neighbors every layer, and over-smoothing on the dense graph
+  is still winning against the (now partially real) signal.
+
+## Open items (priority order) — updated
+
+1. **Correlation-density sweep** (next) — rerun the same 7-qubit generation at
+   `CORRELATED_PAIR_FRACTION` closer to 1.0 (most/all qubits paired) as an upper-bound test: if
+   GAT closes the gap to or beats the MLP baseline when correlation is dense, it confirms the
+   architecture works but is signal-starved at 50% pairing. If it still loses even at high
+   density, the complete-graph/over-smoothing problem is the dominant issue regardless of how
+   much real signal exists, and the graph topology itself (not just the data) needs to change —
+   e.g. sparse/learned edges restricted to actually-correlated pairs instead of all-to-all.
+2. M3 baseline — unchanged, still open.
+3. Scaling study proper — unchanged, still open; still blocked on resolving item 1.
+4. README + thesis writeup — deliberately deferred. Runs 1-8 (5 falsified hypotheses + 2
+   confirmed findings: GAT loses to trivial baseline under no correlation, GAT improves but still
+   loses under partial correlation) are themselves a coherent ablation narrative worth keeping
+   intact for the eventual paper, regardless of how the density sweep turns out.
