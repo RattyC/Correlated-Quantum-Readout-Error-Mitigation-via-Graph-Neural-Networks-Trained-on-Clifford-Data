@@ -8,6 +8,7 @@ achievable by looking at each qubit's own noisy <Z> value in isolation. If this 
 at the same floor, the floor is a data-information-content ceiling, not a GAT/training defect.
 """
 import argparse
+from email import parser
 import random
 
 import torch
@@ -65,6 +66,7 @@ def parse_args():
     parser.add_argument("--hidden-dim", type=int, default=16)
     parser.add_argument("--log-every", type=int, default=5)
     parser.add_argument("--edge-mode", type=str, choices=["full", "sparse"], default="full")
+    parser.add_argument("--pairs-file", type=str, default=None)
     return parser.parse_args()
 
 

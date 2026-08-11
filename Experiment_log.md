@@ -365,3 +365,47 @@ untested by this dataset, not disproven by it.
    hyperparameter/data hypotheses, then a clean correlation-density sweep isolating the
    complete-graph topology as the actual bottleneck) is a strong, coherent ablation story for the
    eventual paper — keep all of it.
+
+---
+
+## Critical bug found and fixed: Aer silently ignores multi-qubit ReadoutError
+
+### The bug
+- Calibration circuit smoke test (|0...0> state, 100,000 shots) revealed only 2 distinct
+  outcomes: `0000000` (97.9-98.0%) and a single-qubit flip on qubit 2 only (~2.0-2.1%, matching
+  the independent-error marginal `P1_GIVEN_0=0.02` exactly). **Every qubit registered as part of
+  a correlated pair via `NoiseModel.add_readout_error(pair_error, [a, b])` showed ZERO error
+  across 100,000 shots.** Pearson correlation scores for all pairs came back as exactly 0.0000.
+- Root cause: **Qiskit Aer silently ignores multi-qubit (joint) `ReadoutError` instructions.**
+  Confirmed via `Qiskit/qiskit-aer#319` (open GitHub issue). No exception, no warning — the
+  noise model just doesn't apply the joint error at all.
+- **Impact: Runs 8, 9, and 10 (all correlated-noise results, including the correlation-density
+  sweep and the sparse-vs-full-graph comparison) were generated on data where the "correlated"
+  qubits actually had ZERO readout error, not correlated error.** The apparent GAT improvement
+  with increasing `CORRELATED_PAIR_FRACTION` in Runs 8-9 is very likely explained by an
+  increasing fraction of qubits being noise-free (diluting average MSE), not by the GAT learning
+  real correlation structure. **These three runs' conclusions should be treated as unconfirmed
+  until re-run on correctly-generated data.**
+
+### The fix
+- Rewrote `src/simulator.py`: correlated readout noise is now applied as **Python
+  post-processing on raw per-shot samples** (`_BACKEND.run(qc, shots=shots, memory=True)` +
+  `get_memory()`), not via Aer's `NoiseModel`/`ReadoutError`. Vectorized with numpy for
+  performance. Same parameters as before (`P1_GIVEN_0`, `P0_GIVEN_1`, `CORRELATION_RHO`,
+  `SHARED_FLIP_PROB`, `CORRELATED_PAIR_FRACTION`).
+- Re-ran the calibration smoke test after the fix: `P(all-zero outcome) = 0.85431` (down from
+  0.97986 — noise is now clearly applying to far more qubits). Top-3 correlation scores:
+  `(0,4): 0.7070`, `(3,5): 0.7046`, `(1,6): 0.7020` — matches the ground-truth pairs
+  `[[1,6],[5,3],[4,0]]` exactly, and matches the hand-calculated theoretical prediction (~0.71)
+  from the noise model's own parameters. **Calibration precision/recall: 3/3, 3/3 — perfect,
+  using measurement statistics only, no ground truth.**
+
+## Open items (priority order) — updated
+
+1. **Regenerate the 7-qubit correlated dataset and re-run Runs 8-10 from scratch** on the fixed
+   `src/simulator.py` — full-graph GAT, sparse-ground-truth GAT, sparse-calibrated-pairs GAT, and
+   MLP baseline, all on the same freshly-generated data. This supersedes the old Run 8/9/10
+   numbers, which are now known to be invalid.
+2. M3 baseline — unchanged, still open.
+3. Scaling study proper — unchanged, still open; blocked on item 1.
+4. README + thesis writeup — deliberately deferred.

@@ -68,6 +68,7 @@ def parse_args():
         help="Print train/test MSE every N epochs.",
     )
     parser.add_argument("--edge-mode", type=str, choices=["full", "sparse"], default="full")
+    parser.add_argument("--pairs-file", type=str, default=None)
     return parser.parse_args()
 
 
@@ -77,9 +78,16 @@ def main():
     torch.manual_seed(42)
     random.seed(42)
 
-    full_dataset = load_and_convert_dataset(args.input, edge_mode=args.edge_mode)
-    random.shuffle(full_dataset)
+    external_pairs = None
+    if args.pairs_file:
+        import json
+        with open(args.pairs_file, "r") as f:
+            external_pairs = json.load(f)
+        print(f"Using external pairs from {args.pairs_file}: {external_pairs}")
 
+    full_dataset = load_and_convert_dataset(args.input, edge_mode=args.edge_mode, external_pairs=external_pairs)
+    random.shuffle(full_dataset)
+    
     train_size = int(0.8 * len(full_dataset))
     train_dataset = full_dataset[:train_size]
     test_dataset = full_dataset[train_size:]

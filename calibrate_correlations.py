@@ -45,7 +45,7 @@ def _pearson_correlation(mean, joint, i, j):
 
 def calibrate(num_qubits: int, shots: int, threshold: float):
     calib_circuit = QuantumCircuit(num_qubits, num_qubits)
-    calib_circuit.measure(range(num_qubits), range(num_qubits))  # |0...0>, no gates before measurement
+    calib_circuit.measure(range(num_qubits), range(num_qubits))  # |0...0> prep, no gates
 
     counts = execute_circuit_pipeline(calib_circuit, shots=shots, use_noise=True)
     mean, joint = _bit_moments(counts, num_qubits)
@@ -55,6 +55,14 @@ def calibrate(num_qubits: int, shots: int, threshold: float):
         score = abs(_pearson_correlation(mean, joint, i, j))
         scored_pairs.append(((i, j), score))
     scored_pairs.sort(key=lambda x: -x[1])
+    total = sum(counts.values())
+    top_counts = sorted(counts.items(), key=lambda kv: -kv[1])[:10]
+    print(f"Total distinct outcomes: {len(counts)} | total shots counted: {total}")
+    print("Top-10 raw outcomes (bitstring: count, fraction):")
+    for bitstring, count in top_counts:
+        print(f"  {bitstring}: {count} ({count/total:.5f})")
+    all_zero = "0" * num_qubits
+    print(f"P(all-zero outcome) = {counts.get(all_zero, 0)/total:.5f}  (should be ~0.95 if noise is applying, ~1.0 if not)")
 
     detected_pairs = [list(pair) for pair, score in scored_pairs if score > threshold]
     return detected_pairs, scored_pairs
