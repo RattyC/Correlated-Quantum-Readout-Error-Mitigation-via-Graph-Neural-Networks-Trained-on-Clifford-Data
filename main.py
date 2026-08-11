@@ -3,7 +3,7 @@ import argparse
 import os
 from concurrent.futures import ProcessPoolExecutor
 from src.generator import generate_random_clifford_circuit
-from src.simulator import execute_circuit_pipeline
+from src.simulator import execute_circuit_pipeline, get_correlated_pairs
 from src.data_exporter import save_dataset_to_json
 
 
@@ -17,27 +17,24 @@ def generate_single_data(circuit_idx, num_qubits, depth, shots):
         "depth": depth,
         "ideal_outputs": ideal_counts,
         "noisy_outputs": noisy_counts,
+        "correlated_pairs": get_correlated_pairs(num_qubits),  # ground truth, same for all circuits at this qubit count
     }
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate Clifford readout-error dataset.")
-    parser.add_argument("--num-qubits", type=int, default=28, help="Number of qubits per circuit.")
-    parser.add_argument("--num-circuits", type=int, default=10000, help="Number of circuits to generate.")
-    parser.add_argument("--depth", type=int, default=30, help="Circuit depth.")
-    parser.add_argument("--shots", type=int, default=4096, help="Shots per circuit simulation.")
-    parser.add_argument(
-        "--output",
-        type=str,
-        default=None,
-        help="Output JSON filename (default: quantum_dataset_q{num_qubits}.json)",
-    )
+    parser.add_argument("--num-qubits", type=int, default=28)
+    parser.add_argument("--num-circuits", type=int, default=10000)
+    parser.add_argument("--depth", type=int, default=30)
+    parser.add_argument("--shots", type=int, default=4096)
+    parser.add_argument("--output", type=str, default=None)
     return parser.parse_args()
 
 
 def run_parallel_pipeline(args):
     print("--- Starting Parallel Qiskit Heavy Pipeline ---")
     print(f"num_qubits={args.num_qubits} | num_circuits={args.num_circuits} | depth={args.depth} | shots={args.shots}")
+    print(f"Correlated pairs (ground truth): {get_correlated_pairs(args.num_qubits)}")
 
     max_workers = os.cpu_count()
     print(f"Spawning jobs across {max_workers} CPU workers...")
