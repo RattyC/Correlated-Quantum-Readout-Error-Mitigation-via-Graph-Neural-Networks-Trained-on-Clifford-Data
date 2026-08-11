@@ -64,6 +64,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--hidden-dim", type=int, default=16)
     parser.add_argument("--log-every", type=int, default=5)
+    parser.add_argument("--edge-mode", type=str, choices=["full", "sparse"], default="full")
     return parser.parse_args()
 
 
@@ -73,7 +74,7 @@ def main():
     torch.manual_seed(42)
     random.seed(42)
 
-    full_dataset = load_and_convert_dataset(args.input)
+    full_dataset = load_and_convert_dataset(args.input, edge_mode=args.edge_mode)
     random.shuffle(full_dataset)
 
     train_size = int(0.8 * len(full_dataset))
