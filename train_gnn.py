@@ -8,11 +8,12 @@ import random
 from prepare_gnn_dataset import load_and_convert_dataset
 
 class QuantumReadoutMitigationGAT(nn.Module):
-    def __init__(self, num_qubits=10):
+    def __init__(self, in_channels):
         super(QuantumReadoutMitigationGAT, self).__init__()
 
-        # ขาเข้า: 1 (Noisy Z) + num_qubits (One-Hot Qubit ID)
-        in_channels = 1 + num_qubits
+        # ขาเข้า: 1 (Noisy Z) + D_MODEL (Sinusoidal Positional Encoding, มิติคงที่
+        # ไม่ผูกกับจำนวนคิวบิตจริง — นี่คือจุดที่ทำให้ zero-shot ข้าม qubit count ทำได้)
+        # in_channels ถูกกำหนดจาก data โดยตรง ไม่ hardcode ในนี้
 
         # เลเยอร์ 1: กวาดข้อมูลจากทุกคิวบิต (เพราะตอนนี้กราฟเชื่อมถึงกันหมดแล้ว)
         self.gat1 = GATConv(in_channels, 16, heads=4, concat=True)
@@ -70,8 +71,10 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
 
-    num_qubits = train_dataset[0].x.shape[1] - 1
-    model = QuantumReadoutMitigationGAT(num_qubits=num_qubits)
+    # in_channels มาจากขนาด feature จริงของ node (1 Noisy Z + D_MODEL PE)
+    # ไม่ใช่จำนวนคิวบิต — คงที่แม้ dataset จะมี graph หลายขนาด (4/6/8/10 qubits) ปนกัน
+    in_channels = train_dataset[0].x.shape[1]
+    model = QuantumReadoutMitigationGAT(in_channels=in_channels)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.MSELoss()
 
