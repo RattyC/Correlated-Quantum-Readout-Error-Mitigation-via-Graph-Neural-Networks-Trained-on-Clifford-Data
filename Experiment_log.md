@@ -409,3 +409,61 @@ untested by this dataset, not disproven by it.
 2. M3 baseline — unchanged, still open.
 3. Scaling study proper — unchanged, still open; blocked on item 1.
 4. README + thesis writeup — deliberately deferred.
+
+### Run 11 — Corrected replacement for Runs 8-10, on properly-generated correlated data
+- Dataset regenerated on the fixed `src/simulator.py` (Python post-processing noise, not Aer
+  NoiseModel): `quantum_dataset_q7_correlated_v2.json`, 7 qubits, 10,000 circuits, ground-truth
+  pairs `[[1,6],[5,3],[4,0]]`.
+- Calibration re-verified on the new data: precision/recall 3/3, scores ~0.70-0.71, matching
+  ground truth exactly — confirms the fix and the blind-detection method both work correctly
+  end-to-end.
+- Command:
+  ```
+  python train_gnn.py --input output_data/quantum_dataset_q7_correlated_v2.json --edge-mode full --epochs 40
+  python train_gnn.py --input output_data/quantum_dataset_q7_correlated_v2.json --edge-mode sparse --epochs 40
+  python train_gnn.py --input output_data/quantum_dataset_q7_correlated_v2.json --edge-mode sparse --pairs-file output_data/detected_pairs_q7.json --epochs 40
+  python train_baseline_mlp.py --input output_data/quantum_dataset_q7_correlated_v2.json --epochs 40
+  ```
+- Result:
+
+  | | Test MSE (epoch 40) |
+  |---|---|
+  | GAT full-graph | 0.002931 |
+  | GAT sparse (ground-truth pairs) | 0.001660 |
+  | GAT sparse (calibrated pairs) | 0.001660 (identical — detected pairs == true pairs exactly) |
+  | MLP baseline (no graph at all) | 0.000215-0.000217 |
+
+- Conclusion — **reverses the Run 10 finding.** Sparse still beats full-graph (over-smoothing
+  confirmed again, consistent with Run 10), and calibrated pairs match ground-truth pairs exactly
+  (calibration pipeline is valid end-to-end). But with real correlated noise now confirmed
+  present (~0.70 Pearson correlation, not the Run 8-10 bug), **the MLP baseline still beats even
+  the correctly-sparse GAT by ~7.7x.** The Run 10 "GAT wins" result is now understood to have been
+  an artifact of the Aer bug (paired qubits had literally zero noise, making the task trivially
+  easy for any model that happened to see them) — not evidence the GAT architecture works.
+- New question, more precisely separated than before: is the failure because (a) partner-qubit
+  information doesn't actually help reduce this specific correction's error much even in
+  principle, or (b) partner information *would* help, but GATConv/attention is a poor mechanism
+  for extracting it (still true even restricted to a 1-neighbor sparse graph)? Run 7-10 couldn't
+  distinguish these because they conflated "has graph access" with "uses GATConv." Run 11 uses a
+  correct sparse graph and GATConv still loses — this points toward (b), but needs to be
+  isolated directly.
+
+## Open items (priority order) — updated
+
+1. **Pair-feature MLP test** (next, decisive) — build a non-graph baseline that still gets the
+   partner qubit's noisy Z value, but as a plain concatenated INPUT FEATURE (not via message
+   passing / attention): for a paired qubit, input = `[own noisy Z, partner noisy Z, own PE]`;
+   for an unpaired qubit, input = `[own noisy Z, 0.0 (no partner), own PE]`. Same MLP depth as
+   `train_baseline_mlp.py`. If this beats the plain MLP baseline (0.000215), it proves partner
+   information IS useful in principle, and the GAT/attention mechanism itself is the bottleneck
+   (not the presence of correlation) — motivating a redesign (e.g. drop GATConv for something
+   simpler on this sparse structure, or debug why attention isn't learning the obvious function).
+   If it does NOT beat the plain baseline, partner information doesn't help much for this
+   specific correction task, and the entire correlated-GNN premise needs to be reconsidered.
+2. M3 baseline — unchanged, still open; increasingly important as an independent sanity check
+   given how consistently trivial baselines have won so far.
+3. Scaling study proper — unchanged, still open; blocked on item 1.
+4. README + thesis writeup — deliberately deferred. This is now a much more interesting (if
+   humbling) result than originally hoped: the correlated-noise premise is real and detectable,
+   but the specific GAT architecture chosen has not yet been shown to exploit it better than a
+   trivial baseline. Worth writing up honestly either way.
