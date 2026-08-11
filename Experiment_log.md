@@ -11,7 +11,7 @@ is the raw record so nothing gets lost between now and then.
 ### Docker
 - **Added:** `Dockerfile` (repo root) — base image `pytorch/pytorch:2.7.0-cuda12.8-cudnn9-runtime`,
   installs `requirements.txt` + `torch_geometric`, `git`. Built and verified on workstation
-  (Ryzen 9 9900X, RTX 5060, CUDA 12.8) — `docker build -t qrem-gnn:latest .` succeeds,
+  (Ryzen 9 9900X, RTX 3080, CUDA 12.8) — `docker build -t qrem-gnn:latest .` succeeds,
   `torch.cuda.is_available() == True` inside container.
 - Run pattern: `docker run --rm -it --gpus all -v "$(pwd)":/app -w /app qrem-gnn:latest bash`
 
@@ -569,3 +569,32 @@ sequence is itself worth keeping in the paper's methodology/negative-results sec
 5. README + thesis writeup — still deferred, but the V2 story now has a genuine positive result
    (MLP beats analytical inversion on KL) to anchor around, alongside the honest KL/TV trade-off
    and the Run 1-12 negative-result narrative from v1.
+
+### Run 13 — Combined KL+TV loss sweep (attempt to close the TV gap from B1)
+- Command: `train_joint_mlp.py` with `--tv-weight` in {0.0, 0.5, 1.0}, same dataset/split/epochs.
+- Result (Test KL / Test TV at epoch 40):
+
+  | tv_weight | Test KL | Test TV |
+  |---|---|---|
+  | 0.0 (original) | 0.001983 | 0.016794 |
+  | 0.5 | 0.002493 | 0.014915 |
+  | 1.0 | 0.002834 | 0.014463 |
+  | Analytical baseline (Run B2, reference) | 0.003689 | 0.009546 |
+
+- Conclusion: **genuine Pareto trade-off, no free lunch.** Increasing `tv_weight` reduces TV but
+  costs KL, with diminishing TV returns (0.5->1.0 barely moves TV further while KL keeps
+  degrading). No weight tested closes the TV gap to analytical while still beating it on KL by a
+  meaningful margin. Decision: keep `tv_weight=0.0` as the reported v2 baseline (maximizes the
+  primary KL metric per V2_PLAN.md); note `tv_weight~0.5` as an alternate operating point if TV
+  matters more for a given downstream use case. Report the full trade-off curve in the thesis
+  rather than picking one number — this is itself informative (KL-optimal and TV-optimal
+  corrections are measurably different solutions, not the same model at different quality levels).
+- Time-boxed: not pursuing further loss-weight tuning: diminishing returns, and Phase C (M3) is
+  higher priority per V2_PLAN.md.
+
+## Open items (priority order) — updated
+
+1. **Phase C: M3 baseline (`mthree` package)** — next.
+2. GNN with inter-pair edges — only if k>2 leakage demonstrated; not yet needed.
+3. Scaling study (4/6/8/10 qubits) — blocked on Phase C.
+4. README + thesis writeup — deferred; report the KL/TV trade-off curve honestly when written.
