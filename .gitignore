@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Environments
+qiskit_env/
+pytorch_fundamentals_env/
+
+# Data / experiment outputs
+output_data/
+*.json
+!package.json
+
+# Jupyter / Colab
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
