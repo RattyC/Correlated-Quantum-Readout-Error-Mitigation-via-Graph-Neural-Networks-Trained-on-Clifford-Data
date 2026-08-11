@@ -12,8 +12,12 @@ from prepare_gnn_dataset import load_and_convert_dataset
 
 
 class QuantumReadoutMitigationGAT(nn.Module):
-    def __init__(self, in_channels):
+    def __init__(self, in_channels, output_activation: str = "clamp"):
         super(QuantumReadoutMitigationGAT, self).__init__()
+
+        if output_activation not in ("clamp", "tanh"):
+            raise ValueError(f"Unknown output_activation: {output_activation!r}")
+        self.output_activation = output_activation
 
         # ขาเข้า: 1 (Noisy Z) + D_MODEL (Sinusoidal Positional Encoding, มิติคงที่
         # ไม่ผูกกับจำนวนคิวบิตจริง — นี่คือจุดที่ทำให้ zero-shot ข้าม qubit count ทำได้)
@@ -36,10 +40,12 @@ class QuantumReadoutMitigationGAT(nn.Module):
 
         mitigated_x = raw_z + out
 
-        # clamp ตัดขอบที่ -1.0 และ 1.0 เพื่อให้ตรงกับสเกลฟิสิกส์ของ <Z>
-        # ข้อจำกัดที่รู้อยู่แล้ว: gradient = 0 นอกช่วง [-1, 1] — ดู README
-        # (Roadmap / known limitations) ก่อนอ้างว่านี่คือทางแก้ที่สมบูรณ์
-        return torch.clamp(mitigated_x, min=-1.0, max=1.0)
+        # ablation switch:
+        # - "clamp": ตัดขอบที่ -1.0/1.0 พอดี แต่ gradient = 0 นอกช่วง [-1, 1] (dead zone)
+        # - "tanh":  gradient ไม่เป็นศูนย์เด็ดขาด แต่เข้าใกล้ ±1 แบบ asymptotic เท่านั้น
+        if self.output_activation == "clamp":
+            return torch.clamp(mitigated_x, min=-1.0, max=1.0)
+        return torch.tanh(mitigated_x)
 
 
 def _evaluate(model, loader, criterion, num_samples):
@@ -62,6 +68,13 @@ def parse_args():
         help="Path to the raw dataset JSON produced by main.py.",
     )
     parser.add_argument("--epochs", type=int, default=40, help="Number of training epochs.")
+    parser.add_argument(
+        "--activation",
+        type=str,
+        choices=["clamp", "tanh"],
+        default="clamp",
+        help="Output activation for the residual correction — used for the clamp-vs-tanh ablation.",
+    )
     return parser.parse_args()
 
 
@@ -84,11 +97,11 @@ def main():
     # in_channels มาจากขนาด feature จริงของ node (1 Noisy Z + D_MODEL PE)
     # ไม่ใช่จำนวนคิวบิต — คงที่แม้ dataset จะมี graph หลายขนาด (4/6/8/10 qubits) ปนกัน
     in_channels = train_dataset[0].x.shape[1]
-    model = QuantumReadoutMitigationGAT(in_channels=in_channels)
+    model = QuantumReadoutMitigationGAT(in_channels=in_channels, output_activation=args.activation)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.MSELoss()
 
-    print("\n Model Architecture ")
+    print(f"\n Model Architecture (output_activation={args.activation}) ")
     print(model)
     print("\n Residual GAT Training Loop on Pauli-Z Domain ")
 
