@@ -42,6 +42,7 @@ def parse_args():
     parser.add_argument("--hidden-dim", type=int, default=16)
     parser.add_argument("--log-every", type=int, default=5)
     parser.add_argument("--tv-weight", type=float, default=0.0, help="Weight for TV term added to KL loss. 0.0 = original KL-only.")
+    parser.add_argument("--save-model", type=str, default=None)
     return parser.parse_args()
 
 
@@ -91,7 +92,9 @@ def main():
 
         if epoch == 1 or epoch % args.log_every == 0 or epoch == args.epochs:
             print(f"Epoch {epoch:03d}/{args.epochs} | Train Loss: {avg_train:.6f} | Test KL: {avg_test_kl:.6f} | Test TV: {avg_test_tv:.6f}")
-
+        if args.save_model:
+            torch.save(model.state_dict(), args.save_model)
+            print(f"\nModel saved to {args.save_model}")
     model.eval()
     with torch.no_grad():
         x0, y0 = test_ds[0]
