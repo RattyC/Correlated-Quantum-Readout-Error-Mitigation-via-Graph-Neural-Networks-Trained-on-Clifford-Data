@@ -467,3 +467,54 @@ untested by this dataset, not disproven by it.
    humbling) result than originally hoped: the correlated-noise premise is real and detectable,
    but the specific GAT architecture chosen has not yet been shown to exploit it better than a
    trivial baseline. Worth writing up honestly either way.
+
+---
+
+## MAJOR PIVOT: per-qubit ⟨Z⟩ regression → joint/bitstring-level correction
+
+### Why
+- Run 12 (pair-feature MLP, partner's noisy Z given directly as an input feature) landed at
+  Test MSE 0.000216-0.000219 — statistically indistinguishable from the plain no-graph baseline
+  (0.000215-0.000217), despite confirmed real correlation (~0.70 Pearson) between paired qubits.
+- Root cause: correlation exists at the **per-shot** level (a shared crosstalk event flips both
+  qubits together in the same shot), but the project's target/feature representation uses
+  **per-circuit shot-averaged ⟨Z⟩** — averaging over thousands of shots destroys the joint
+  per-shot structure. A paired qubit's own aggregate ⟨Z⟩ already fully captures its own marginal
+  bias (which differs from an unpaired qubit's, 0.035 vs 0.02, by construction), so there is no
+  *additional* information in a partner's aggregate value once you already have your own.
+- Conclusion: **per-qubit expectation-value regression is the wrong problem level to exploit
+  readout correlation at all — this is true regardless of architecture (GAT, MLP, pair-feature
+  MLP all converge to the same floor).** The project needs to operate on joint/marginal
+  probability distributions (matching how M3 and Maciejewski et al. actually formulate the
+  problem), not per-qubit ⟨Z⟩ values.
+
+### Decision
+- Reformulate the target from per-qubit ⟨Z⟩ (7 scalar outputs) to **per-correlated-pair joint
+  probability distribution** (4 outcomes: P(00), P(01), P(10), P(11), corrected). Stays
+  efficient/k-local (matches Maciejewski et al.'s approach) rather than blowing up to full 2^N.
+  Unpaired qubits keep simple per-qubit ⟨Z⟩ correction as before.
+- This requires: (1) new node/edge features carrying raw joint co-occurrence statistics per pair,
+  not just marginal ⟨Z⟩; (2) new loss (KL divergence / cross-entropy on the joint distribution,
+  not MSE on ⟨Z⟩); (3) `prepare_gnn_dataset.py`, `train_gnn.py`, and both MLP baselines need
+  substantial rewrites — this is close to a v2 of the pipeline, not a patch.
+- Given the scope, this should be scoped/designed explicitly before implementation starts, to
+  avoid scope drift — this is now the #1 open item, superseding everything else on the list.
+
+## Open items (priority order) — updated
+
+1. **Design v2 pipeline (joint/pair-level correction) before writing code.** Needs: exact feature
+   spec per node/edge, exact loss formulation, and confirmation the approach stays k-local/
+   efficient at scale (must not reintroduce 2^N blowup — the entire point of using Clifford data
+   in the first place).
+2. Once v2 pipeline works end-to-end on the 7-qubit correlated dataset: re-run the GAT vs.
+   baseline comparison at the joint level — this is the real test of the thesis's core claim.
+3. M3 baseline — unchanged, still open; more important than ever as an independent check once v2
+   is running, since M3 already operates at roughly this level of granularity.
+4. Scaling study proper — unchanged, still open; blocked on 1-2.
+5. README + thesis writeup — deliberately deferred.
+
+**Note for whoever reads this log:** Runs 1-12 were not wasted effort even though the final
+architecture/target changed — they systematically ruled out 6 alternative explanations (clamp
+dead zone, data scale, label shot noise, learning rate, model capacity, GATConv-vs-partner-
+feature-access) before landing on the real explanation (wrong problem level). This ablation
+sequence is itself worth keeping in the paper's methodology/negative-results section.
