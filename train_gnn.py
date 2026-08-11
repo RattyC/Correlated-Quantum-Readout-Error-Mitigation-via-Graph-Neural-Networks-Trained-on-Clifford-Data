@@ -19,10 +19,6 @@ class QuantumReadoutMitigationGAT(nn.Module):
             raise ValueError(f"Unknown output_activation: {output_activation!r}")
         self.output_activation = output_activation
 
-        # ขาเข้า: 1 (Noisy Z) + D_MODEL (Sinusoidal Positional Encoding, มิติคงที่
-        # ไม่ผูกกับจำนวนคิวบิตจริง — นี่คือจุดที่ทำให้ zero-shot ข้าม qubit count ทำได้)
-        # in_channels ถูกกำหนดจาก data โดยตรง ไม่ hardcode ในนี้
-
         self.gat1 = GATConv(in_channels, 16, heads=4, concat=True)
         self.gat2 = GATConv(64, 16, heads=1, concat=False)
         self.fc = nn.Linear(16, 1)
@@ -40,9 +36,6 @@ class QuantumReadoutMitigationGAT(nn.Module):
 
         mitigated_x = raw_z + out
 
-        # ablation switch:
-        # - "clamp": ตัดขอบที่ -1.0/1.0 พอดี แต่ gradient = 0 นอกช่วง [-1, 1] (dead zone)
-        # - "tanh":  gradient ไม่เป็นศูนย์เด็ดขาด แต่เข้าใกล้ ±1 แบบ asymptotic เท่านั้น
         if self.output_activation == "clamp":
             return torch.clamp(mitigated_x, min=-1.0, max=1.0)
         return torch.tanh(mitigated_x)
@@ -61,19 +54,16 @@ def _evaluate(model, loader, criterion, num_samples):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the QuantumReadoutMitigationGAT model.")
+    parser.add_argument("--input", type=str, default="output_data/quantum_large_dataset.json")
+    parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument(
-        "--input",
-        type=str,
-        default="output_data/quantum_large_dataset.json",
-        help="Path to the raw dataset JSON produced by main.py.",
+        "--activation", type=str, choices=["clamp", "tanh"], default="clamp",
+        help="Output activation for the residual correction.",
     )
-    parser.add_argument("--epochs", type=int, default=40, help="Number of training epochs.")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Adam learning rate.")
     parser.add_argument(
-        "--activation",
-        type=str,
-        choices=["clamp", "tanh"],
-        default="clamp",
-        help="Output activation for the residual correction — used for the clamp-vs-tanh ablation.",
+        "--log-every", type=int, default=5,
+        help="Print train/test MSE every N epochs (use 1 for full-resolution convergence trace).",
     )
     return parser.parse_args()
 
@@ -94,14 +84,12 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
 
-    # in_channels มาจากขนาด feature จริงของ node (1 Noisy Z + D_MODEL PE)
-    # ไม่ใช่จำนวนคิวบิต — คงที่แม้ dataset จะมี graph หลายขนาด (4/6/8/10 qubits) ปนกัน
     in_channels = train_dataset[0].x.shape[1]
     model = QuantumReadoutMitigationGAT(in_channels=in_channels, output_activation=args.activation)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.MSELoss()
 
-    print(f"\n Model Architecture (output_activation={args.activation}) ")
+    print(f"\n Model Architecture (output_activation={args.activation}, lr={args.lr}) ")
     print(model)
     print("\n Residual GAT Training Loop on Pauli-Z Domain ")
 
@@ -119,8 +107,8 @@ def main():
 
         average_test_loss = _evaluate(model, test_loader, criterion, len(test_dataset))
 
-        if epoch == 1 or epoch % 5 == 0 or epoch == args.epochs:
-            print(f"Epoch {epoch:02d}/{args.epochs} | Train MSE: {average_train_loss:.6f} | Test MSE: {average_test_loss:.6f}")
+        if epoch == 1 or epoch % args.log_every == 0 or epoch == args.epochs:
+            print(f"Epoch {epoch:03d}/{args.epochs} | Train MSE: {average_train_loss:.6f} | Test MSE: {average_test_loss:.6f}")
 
     model.eval()
     with torch.no_grad():
