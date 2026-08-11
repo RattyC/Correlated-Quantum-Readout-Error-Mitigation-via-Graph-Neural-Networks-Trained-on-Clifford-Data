@@ -39,7 +39,7 @@ def build_assignment_matrix(qubit_a, qubit_b, num_qubits, shots):
             qc.x(qubit_b)
         qc.measure(range(num_qubits), range(num_qubits))
         counts = execute_circuit_pipeline(qc, shots=shots, use_noise=True)
-        A[:, prep_idx] = marginal_joint_distribution(counts, qubit_a, qubit_b)
+        A[:, prep_idx] = marginal_joint_distribution(counts, qubit_a, qubit_b).detach().numpy()
     return A
 
 
@@ -110,8 +110,8 @@ def main():
         for item in raw_data:
             if [qa, qb] not in item["correlated_pairs"] and (qa, qb) not in item["correlated_pairs"]:
                 continue
-            p_noisy = marginal_joint_distribution(item["noisy_outputs"], qa, qb)
-            p_ideal = marginal_joint_distribution(item["ideal_outputs"], qa, qb)
+            p_noisy = marginal_joint_distribution(item["noisy_outputs"], qa, qb).detach().numpy()
+            p_ideal = marginal_joint_distribution(item["ideal_outputs"], qa, qb).detach().numpy()
             p_corrected = ibu_correct(p_noisy, A, iterations=args.iterations)
             kl_list.append(kl_divergence(p_ideal, p_corrected))
             tv_list.append(total_variation(p_ideal, p_corrected))
