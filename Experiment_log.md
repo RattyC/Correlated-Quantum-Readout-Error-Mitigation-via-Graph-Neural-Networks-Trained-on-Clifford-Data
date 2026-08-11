@@ -135,3 +135,35 @@ Confirmed already correct, no change needed:
 3. M3 baseline — unchanged, still open.
 4. Scaling study proper — unchanged, still open.
 5. README + thesis writeup — deliberately deferred until items 2-3 above are done.
+
+### Run 5 — Learning-rate sweep (7-qubit baseline dataset, clamp, controls held fixed)
+- Command: `python train_gnn.py --input output_data/quantum_large_dataset.json --lr 0.0001 --epochs 200 --log-every 10`
+- Result: Test MSE converges to 0.001509 by ~epoch 30-40, then stays flat through epoch 200.
+  Essentially identical to the lr=1e-3/epochs=40 baseline floor (0.001509-0.001513) — only
+  difference is convergence speed (slower with lower LR, as expected), not the floor reached.
+- Conclusion: learning-rate-too-aggressive hypothesis is **falsified**. 10x lower LR and 5x more
+  epochs land at the same floor. The plateau is not an optimizer-speed artifact.
+
+### Ruled out so far — updated
+1. ~~Clamp gradient dead zone~~ — falsified by Run 3.
+2. ~~Data scale (qubit count)~~ — falsified by Run 2.
+3. ~~Label shot noise~~ — mostly falsified by Run 4.
+4. ~~Learning rate too high~~ — falsified by Run 5.
+
+Remaining leading hypothesis: **model capacity ceiling** — 2,267 params / hidden_dim=16 / 2 GAT
+layers (kept shallow specifically to limit over-smoothing on the complete graph, per README) may
+simply not have enough capacity to fit anything beyond the current floor. Next test: widen
+hidden_dim (16 -> 64) with lr/epochs held at original baseline, same 7-qubit dataset.
+
+## Open items (priority order) — updated
+
+1. **Model capacity sweep** (next) — add `--hidden-dim` CLI flag to `train_gnn.py` (default 16).
+   Rerun 7-qubit baseline at `--hidden-dim 64` (lr=1e-3, epochs=40, clamp). If MSE floor drops
+   meaningfully, capacity was the bottleneck — consider trade-off against over-smoothing risk
+   before permanently widening. If floor stays ~0.0015, the architecture may be at/near a genuine
+   Bayes-optimal floor for this synthetic uncorrelated-noise task, which would itself be a
+   noteworthy (if less exciting) finding to write up.
+2. Correlated noise model — unchanged, still open.
+3. M3 baseline — unchanged, still open.
+4. Scaling study proper — unchanged, still open.
+5. README + thesis writeup — deliberately deferred until items 2-3 above are done.
