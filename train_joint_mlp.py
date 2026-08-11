@@ -20,18 +20,18 @@ class JointCorrectionMLP(nn.Module):
     def forward(self, x):
         out = F.elu(self.fc1(x))
         out = F.elu(self.fc2(out))
-        logits = self.fc_out(out) + torch.log(x.clamp_min(1e-6))  # residual in logit space
+        logits = self.fc_out(out) + torch.log(x.clamp_min(1e-6))
         return F.softmax(logits, dim=-1)
 
 
-def kl_loss(pred, target, eps=1e-8):
+def kl_per_example(pred, target, eps=1e-8):
     pred = pred.clamp_min(eps)
     target = target.clamp_min(eps)
-    return (target * (target.log() - pred.log())).sum(dim=-1).mean()
+    return (target * (target.log() - pred.log())).sum(dim=-1)
 
 
-def total_variation(pred, target):
-    return (0.5 * (pred - target).abs().sum(dim=-1)).mean()
+def tv_per_example(pred, target):
+    return 0.5 * (pred - target).abs().sum(dim=-1)
 
 
 def parse_args():
@@ -41,6 +41,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--hidden-dim", type=int, default=16)
     parser.add_argument("--log-every", type=int, default=5)
+    parser.add_argument("--tv-weight", type=float, default=0.0, help="Weight for TV term added to KL loss. 0.0 = original KL-only.")
     return parser.parse_args()
 
 
@@ -61,7 +62,7 @@ def main():
     num_params = sum(p.numel() for p in model.parameters())
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    print(f"\n Joint Correction MLP (hidden_dim={args.hidden_dim}, params={num_params}, lr={args.lr}) ")
+    print(f"\n Joint Correction MLP (hidden_dim={args.hidden_dim}, params={num_params}, lr={args.lr}, tv_weight={args.tv_weight}) ")
     print(model)
 
     for epoch in range(1, args.epochs + 1):
@@ -70,7 +71,9 @@ def main():
         for x, y in train_loader:
             optimizer.zero_grad()
             pred = model(x)
-            loss = kl_loss(pred, y)
+            kl = kl_per_example(pred, y)
+            tv = tv_per_example(pred, y)
+            loss = (kl + args.tv_weight * tv).mean()
             loss.backward()
             optimizer.step()
             total_train_loss += loss.item() * x.size(0)
@@ -81,13 +84,13 @@ def main():
         with torch.no_grad():
             for x, y in test_loader:
                 pred = model(x)
-                total_test_kl += kl_loss(pred, y).item() * x.size(0)
-                total_test_tv += total_variation(pred, y).item() * x.size(0)
+                total_test_kl += kl_per_example(pred, y).sum().item()
+                total_test_tv += tv_per_example(pred, y).sum().item()
         avg_test_kl = total_test_kl / len(test_ds)
         avg_test_tv = total_test_tv / len(test_ds)
 
         if epoch == 1 or epoch % args.log_every == 0 or epoch == args.epochs:
-            print(f"Epoch {epoch:03d}/{args.epochs} | Train KL: {avg_train:.6f} | Test KL: {avg_test_kl:.6f} | Test TV: {avg_test_tv:.6f}")
+            print(f"Epoch {epoch:03d}/{args.epochs} | Train Loss: {avg_train:.6f} | Test KL: {avg_test_kl:.6f} | Test TV: {avg_test_tv:.6f}")
 
     model.eval()
     with torch.no_grad():
