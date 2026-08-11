@@ -12,16 +12,17 @@ from prepare_gnn_dataset import load_and_convert_dataset
 
 
 class QuantumReadoutMitigationGAT(nn.Module):
-    def __init__(self, in_channels, output_activation: str = "clamp"):
+    def __init__(self, in_channels, hidden_dim: int = 16, output_activation: str = "clamp"):
         super(QuantumReadoutMitigationGAT, self).__init__()
 
         if output_activation not in ("clamp", "tanh"):
             raise ValueError(f"Unknown output_activation: {output_activation!r}")
         self.output_activation = output_activation
 
-        self.gat1 = GATConv(in_channels, 16, heads=4, concat=True)
-        self.gat2 = GATConv(64, 16, heads=1, concat=False)
-        self.fc = nn.Linear(16, 1)
+        # heads=4 บน gat1 -> ขนาดออก concat = hidden_dim * 4, ต้องส่งต่อให้ gat2 ตรง
+        self.gat1 = GATConv(in_channels, hidden_dim, heads=4, concat=True)
+        self.gat2 = GATConv(hidden_dim * 4, hidden_dim, heads=1, concat=False)
+        self.fc = nn.Linear(hidden_dim, 1)
 
     def forward(self, x, edge_index):
         raw_z = x[:, 0].view(-1, 1)
@@ -61,9 +62,10 @@ def parse_args():
         help="Output activation for the residual correction.",
     )
     parser.add_argument("--lr", type=float, default=1e-3, help="Adam learning rate.")
+    parser.add_argument("--hidden-dim", type=int, default=16, help="GAT hidden dimension.")
     parser.add_argument(
         "--log-every", type=int, default=5,
-        help="Print train/test MSE every N epochs (use 1 for full-resolution convergence trace).",
+        help="Print train/test MSE every N epochs.",
     )
     return parser.parse_args()
 
@@ -85,11 +87,16 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
 
     in_channels = train_dataset[0].x.shape[1]
-    model = QuantumReadoutMitigationGAT(in_channels=in_channels, output_activation=args.activation)
+    model = QuantumReadoutMitigationGAT(
+        in_channels=in_channels,
+        hidden_dim=args.hidden_dim,
+        output_activation=args.activation,
+    )
+    num_params = sum(p.numel() for p in model.parameters())
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.MSELoss()
 
-    print(f"\n Model Architecture (output_activation={args.activation}, lr={args.lr}) ")
+    print(f"\n Model Architecture (hidden_dim={args.hidden_dim}, params={num_params}, output_activation={args.activation}, lr={args.lr}) ")
     print(model)
     print("\n Residual GAT Training Loop on Pauli-Z Domain ")
 
