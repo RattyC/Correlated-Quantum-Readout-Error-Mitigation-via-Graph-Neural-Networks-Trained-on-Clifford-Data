@@ -28,7 +28,7 @@ P1_GIVEN_0 = 0.02           # P(measure '1' | true state |0>) — per-qubit marg
 P0_GIVEN_1 = 0.03           # P(measure '0' | true state |1>) — per-qubit marginal
 CORRELATION_RHO = 0.5       # 0.0 = fully independent (old model), 1.0 = fully correlated
 SHARED_FLIP_PROB = 0.05     # probability the shared crosstalk event fires on a pair
-CORRELATED_PAIR_FRACTION = 0.5  # fraction of qubits placed into correlated pairs
+CORRELATED_PAIR_FRACTION = 1.0  # fraction of qubits placed into correlated pairs
 NOISE_MODEL_SEED = 20260811     # fixed so pair topology is reproducible per num_qubits
 
 
