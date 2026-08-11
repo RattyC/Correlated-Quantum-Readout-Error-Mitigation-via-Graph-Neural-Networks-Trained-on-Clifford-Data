@@ -11,7 +11,7 @@ is the raw record so nothing gets lost between now and then.
 ### Docker
 - **Added:** `Dockerfile` (repo root) — base image `pytorch/pytorch:2.7.0-cuda12.8-cudnn9-runtime`,
   installs `requirements.txt` + `torch_geometric`, `git`. Built and verified on workstation
-  (Ryzen 9 9900X, RTX 3080, CUDA 12.8) — `docker build -t qrem-gnn:latest .` succeeds,
+  (Ryzen 9 9900X, RTX 5060, CUDA 12.8) — `docker build -t qrem-gnn:latest .` succeeds,
   `torch.cuda.is_available() == True` inside container.
 - Run pattern: `docker run --rm -it --gpus all -v "$(pwd)":/app -w /app qrem-gnn:latest bash`
 
@@ -598,3 +598,56 @@ sequence is itself worth keeping in the paper's methodology/negative-results sec
 2. GNN with inter-pair edges — only if k>2 leakage demonstrated; not yet needed.
 3. Scaling study (4/6/8/10 qubits) — blocked on Phase C.
 4. README + thesis writeup — deferred; report the KL/TV trade-off curve honestly when written.
+
+---
+
+## Phase C complete: M3 baseline result
+
+### Method
+- `calibrate_single_qubit_m3.py`: per-qubit 2x2 calibration matrices via prep-|0>/prep-|1>
+  circuits (mirrors mthree's own "independent" calibration method exactly), 50,000 shots/qubit.
+  Verified against known ground-truth marginals: qubit 2 (unpaired) showed P(1|0)=0.01872,
+  matching the designed independent rate (0.02) closely; paired qubits showed P(1|0)~0.034-0.041,
+  matching the theoretical combined rate for paired qubits (~0.035) from the noise model design.
+  **M3's single-qubit calibration itself is accurate.**
+- `eval_m3_baseline.py`: injected calibration via `mthree.M3Mitigation.cals_from_matrices()`
+  (no live backend needed — this method exists in mthree and accepts raw matrices directly,
+  found by reading `mthree/mitigation.py` source). Applied `apply_correction()` per pair to the
+  noisy 2-qubit marginal counts, compared corrected joint distribution to ideal.
+
+### Result — full comparison table
+
+| Method | Mean KL divergence | Mean TV distance |
+|---|---|---|
+| **M3** (tensor-product, per-qubit independent) | **0.011454** | **0.017356** |
+| Analytical pair-level inversion (pinv, Phase B2) | 0.003689 | 0.009546 |
+| Joint Correction MLP, tv_weight=0.0 (Phase B1) | 0.001983 | 0.016794 |
+| Joint Correction MLP, tv_weight=0.5 (Run 13) | 0.002493 | 0.014915 |
+
+### Conclusion — the central empirical result of this project
+- **M3 loses on both metrics to every pair-aware method tested**, including a simple 4x4 matrix
+  inversion. This is not a calibration error on M3's part — its per-qubit marginals were verified
+  accurate. It is a direct, empirical consequence of M3's architecture: confirmed from source
+  (`mthree/mitigation.py`), `single_qubit_cals` is a list of independent 2x2 matrices with no
+  cross-qubit term anywhere in the correction formula — M3's implicit model assumes the joint
+  readout error factors as a tensor product of independent single-qubit errors. When that
+  assumption is false (as designed in this project's correlated noise model), M3's correction is
+  actively worse than doing nothing pair-aware at all.
+- **This is the first empirical (not just literature-cited) confirmation of the thesis's core
+  motivating claim**: M3 cannot capture correlated crosstalk by construction, not merely "has not
+  been shown to." Combined with Phase B2's finding (naive full inversion produces negative
+  probabilities in 65.5% of cases) and Phase B1's finding (a 420-parameter MLP beats both M3 and
+  naive inversion on KL), this gives a complete three-way comparison for the thesis:
+  M3 (wrong model, fails structurally) < naive inversion (right model, unstable/negative entries)
+  < learned pair-correction (right model, stable by construction via softmax).
+
+## Open items (priority order) — updated
+
+1. **Write up Phase A-C results** — this three-way comparison (M3 vs analytical vs learned) is
+   likely the strongest single result in the project; worth drafting the relevant paper section
+   now while details are fresh, even though full README/thesis writeup is still deferred overall.
+2. Scaling study (4/6/8/10 qubits) — now the natural next experimental step; M3's disadvantage
+   should be expected to persist/worsen at larger qubit counts if more pairs are added.
+3. GNN with inter-pair edges — still deferred pending evidence of k>2 leakage.
+4. Full README + thesis writeup — still deferred, but Phase A-C narrative is essentially
+   publication-ready as a self-contained result even before the scaling study.
