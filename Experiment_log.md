@@ -11,7 +11,7 @@ is the raw record so nothing gets lost between now and then.
 ### Docker
 - **Added:** `Dockerfile` (repo root) — base image `pytorch/pytorch:2.7.0-cuda12.8-cudnn9-runtime`,
   installs `requirements.txt` + `torch_geometric`, `git`. Built and verified on workstation
-  (Ryzen 9 9900X, RTX 3080, CUDA 12.8) — `docker build -t qrem-gnn:latest .` succeeds,
+  (Ryzen 9 9900X, RTX 5060, CUDA 12.8) — `docker build -t qrem-gnn:latest .` succeeds,
   `torch.cuda.is_available() == True` inside container.
 - Run pattern: `docker run --rm -it --gpus all -v "$(pwd)":/app -w /app qrem-gnn:latest bash`
 
@@ -84,4 +84,54 @@ Confirmed already correct, no change needed:
 4. Scaling study proper (4/6/8/10+ qubits, zero-shot cross-qubit-count eval) — infra is ready
    (`main.py --num-qubits`, sinusoidal PE) but not yet run as an actual study; only ran 7 and 28
    as isolated smoke tests so far.
+5. README + thesis writeup — deliberately deferred until items 2-3 above are done.
+
+### Run 4 — Shot-count sweep (7-qubit dataset, clamp, controls held fixed)
+- Command:
+  ```
+  python main.py --num-qubits 7 --num-circuits 10000 --depth 30 --shots 16384 --output quantum_dataset_q7_s16384.json
+  python prepare_gnn_dataset.py --input output_data/quantum_dataset_q7_s16384.json
+  python train_gnn.py --input output_data/quantum_dataset_q7_s16384.json --epochs 40 --activation clamp
+
+  python main.py --num-qubits 7 --num-circuits 10000 --depth 30 --shots 32768 --output quantum_dataset_q7_s32768.json
+  python prepare_gnn_dataset.py --input output_data/quantum_dataset_q7_s32768.json
+  python train_gnn.py --input output_data/quantum_dataset_q7_s32768.json --epochs 40 --activation clamp
+  ```
+- Result:
+
+  | shots | Test MSE (epoch 40) | drop from baseline (4096) |
+  |---|---|---|
+  | 4,096 (baseline, Run 1) | 0.001513 | - |
+  | 16,384 (4x) | 0.001350 | -10.8% |
+  | 32,768 (8x) | 0.001328 | -12.2% |
+
+  Pure shot-noise-variance scaling (~1/N) predicts -75% at 4x shots and -87.5% at 8x shots.
+  Actual drop is an order of magnitude smaller than predicted, and shows diminishing returns
+  (16384->32768 only drops a further 1.6% despite doubling shots again).
+
+- Conclusion: label shot-noise floor hypothesis is **mostly falsified** — it explains a small
+  slice of the plateau (~0.00016 of the ~0.0015 MSE) but not the dominant ~0.0013 component,
+  which stays flat regardless of shots, qubit count (Run 2), or activation (Run 3).
+- Observation carried into next hypothesis: plateau onset is epoch 5 in every run regardless of
+  what was varied (dataset, qubit count, shots, activation). This is a consistent optimization
+  signature, not a data-noise signature — points at learning rate / model capacity next.
+- Qualitative note: mitigated correction magnitude looks roughly constant (~0.02-0.03) across
+  most samples regardless of which circuit produced them — consistent with the model having
+  converged to something close to a constant/near-linear correction rather than a per-sample
+  learned function. Worth checking directly once the LR/capacity experiments below are run.
+
+### Ruled out so far
+1. ~~Clamp gradient dead zone~~ — falsified by Run 3 (tanh is worse, same plateau epoch).
+2. ~~Data scale (qubit count)~~ — falsified by Run 2 (28q plateau == 7q plateau).
+3. ~~Label shot noise~~ — mostly falsified by Run 4 (predicted vs actual drop off by ~10x).
+
+## Open items (priority order) — updated
+
+1. **Learning rate / model capacity sweep** (next) — add `--lr` CLI flag to `train_gnn.py`
+   (default 1e-3, matching current). Rerun 7-qubit baseline at `--lr 1e-4 --epochs 200` to check
+   whether plateau is Adam converging too fast at the current LR vs. a genuine capacity ceiling.
+   Follow up with a hidden-dim increase (16 -> 64) if lowering LR doesn't move the floor.
+2. Correlated noise model — unchanged, still open (see above).
+3. M3 baseline — unchanged, still open.
+4. Scaling study proper — unchanged, still open.
 5. README + thesis writeup — deliberately deferred until items 2-3 above are done.
