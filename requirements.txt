@@ -1,7 +1,17 @@
+# Core simulation
 qiskit>=1.0.0
 qiskit-aer>=0.14.0
 numpy
 pandas
-torch>=2.2.0
-torch-geometric>=2.5.0
-qiskit-ibm-runtime mthree --break-system-packages
+
+# Learned models (v1 + v2 pipelines)
+torch>=2.0.0
+
+# v1 pipeline only (GAT ablation) -- skip if you only need the v2 joint-correction method
+torch-geometric
+
+# Classical M3 baseline
+mthree
+
+# Real hardware validation scripts only -- requires a free IBM Quantum Platform account
+qiskit-ibm-runtime>=0.20.0
