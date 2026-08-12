@@ -4,3 +4,4 @@ numpy
 pandas
 torch>=2.2.0
 torch-geometric>=2.5.0
+qiskit-ibm-runtime mthree --break-system-packages
